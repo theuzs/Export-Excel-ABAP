@@ -1,0 +1,321 @@
+
+
+*&---------------------------------------------------------------------*
+*&      Form  VAR IN / OUT
+*&---------------------------------------------------------------------*
+
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_in_xls.
+
+  DATA:
+    w_file  TYPE filetable,
+    fs_file LIKE LINE OF w_file,
+    w_i     TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    CHANGING
+      file_table = w_file
+      rc         = w_i.
+  IF sy-subrc <> 0.
+  ENDIF.
+
+  LOOP AT w_file INTO fs_file.
+    p_in_xls =     fs_file-filename.
+  ENDLOOP.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_out_xl.
+
+  CALL METHOD cl_gui_frontend_services=>directory_browse
+*     EXPORTING
+*       WINDOW_TITLE        =
+*      INITIAL_FOLDER       =
+    CHANGING
+      selected_folder      = p_out_xl
+    EXCEPTIONS
+      cntl_error           = 1
+      error_no_gui         = 2
+      not_supported_by_gui = 3
+      OTHERS               = 4.
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  OPEN EXCEL
+*&---------------------------------------------------------------------*
+
+
+
+* Abrir a planilha para atualização
+  IF h_appl-header = space OR h_appl-handle = -1.
+    CREATE OBJECT h_appl 'EXCEL.APPLICATION'.
+    SET PROPERTY OF h_appl 'VISIBLE' = 0 .        " Flavio Lara
+  ENDIF.
+
+
+* Create an Excel workbook Object.
+  GET PROPERTY OF
+      h_appl
+      'WORKBOOKS' = h_work.
+
+
+* Abrir o arquivo para alterações                 " Flavio Lara
+  CALL METHOD OF                                  " Flavio Lara
+      h_work                                      " Flavio Lara
+      'OPEN'                                      " Flavio Lara
+    EXPORTING                                     " Flavio Lara
+      #1            = p_in_xls.                   " Flavio Lara
+
+
+      * Montar nome do arquivo a ser gerado
+  CONCATENATE p_out_xl '\VAL' sy-datum sy-uzeit  '.XLS'
+              INTO l_file.
+
+
+
+  CALL METHOD OF                                        " Flavio Lara
+    h_appl                                            " Flavio Lara
+      'ActiveWorkbook' = h_work_add.                    " Flavio Lara
+
+* Salvar planilha
+  CALL METHOD OF
+    h_work_add
+    'SAVEAS'
+    EXPORTING
+      #1 = l_file     "name of excel
+      #2 = 1.                                   "file format
+
+  PERFORM f_finaliza_excel.
+
+  "Exportação concluida
+  MESSAGE s231 WITH TEXT-s06 p_cert .
+
+
+ENDFORM.                    " ZF_RUN_OLE_SAP_XLS_VALLOUREC
+
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  send_cell_value
+*&---------------------------------------------------------------------*
+
+
+FORM send_cell_value USING p_cell
+                           p_value
+                           p_font_size TYPE i
+                           p_bold      TYPE abap_bool
+                           p_center    TYPE abap_bool.
+
+  CALL METHOD OF
+      h_appl
+      'RANGE' = h_range
+    EXPORTING
+      #1      = p_cell.
+
+  CALL METHOD OF
+    h_range
+    'ACTIVATE'.
+
+  GET PROPERTY OF h_appl 'ACTIVECELL' = h_cell.
+
+  SET PROPERTY OF h_cell 'VALUE' = p_value.
+
+  GET PROPERTY OF h_cell 'FONT' = h_font.
+
+  SET PROPERTY OF h_font 'NAME' = 'Times New Roman'.
+
+  SET PROPERTY OF h_font 'SIZE' = p_font_size.
+
+  IF p_bold = abap_true.
+    SET PROPERTY OF h_font 'Bold' = 1.
+  ELSE.
+    SET PROPERTY OF h_font 'Bold' = 0.
+  ENDIF.
+
+  " Set text alignment
+  IF p_center = abap_true.
+    SET PROPERTY OF h_cell 'HorizontalAlignment' = -4108. " Center alignment
+  ELSE.
+    SET PROPERTY OF h_cell 'HorizontalAlignment' = -4131. " Right alignment
+  ENDIF.
+
+  FREE OBJECT h_font.
+  FREE OBJECT h_cell.
+  FREE OBJECT h_range.
+
+ENDFORM.                               " SEND_CELL_VALUE
+
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  F_FINALIZA_EXCEL
+*&---------------------------------------------------------------------*
+
+FORM f_finaliza_excel .
+
+  CALL METHOD OF
+    h_work
+    'CLOSE'.
+
+  CALL METHOD OF
+    h_work_add
+    'CLOSE'.
+
+* Encerrando a aplicação
+  CALL METHOD OF h_appl 'QUIT'.        " MÉTODO PARA FECHAR
+
+* Free all objects                                      " Flavio Lara
+  FREE OBJECT h_cell.                                   " Flavio Lara
+  FREE OBJECT h_range.                                  " Flavio Lara
+  FREE OBJECT h_work_add.                               " Flavio Lara
+  FREE OBJECT h_work.                                   " Flavio Lara
+  FREE OBJECT h_appl.                                   " Flavio Lara
+  h_appl-handle = -1.                                   " Flavio Lara
+
+ENDFORM.                    " F_FINALIZA_EXCEL
+
+FORM insert_row USING   p_row           TYPE i
+                        p_lines_to_skip TYPE i.
+
+  DATA: h_range    TYPE ole2_object,
+        l_range    TYPE string,
+        lv_str_row TYPE string.
+  lv_str_row = p_row.
+
+
+  CONCATENATE 'A' lv_str_row ':AG' lv_str_row INTO l_range.
+
+  CALL METHOD OF
+      h_appl
+      'RANGE' = h_range
+    EXPORTING
+      #1 = l_range.
+
+
+  DO   p_lines_to_skip TIMES.
+    " Insere a nova linha
+    CALL METHOD OF h_range 'INSERT'.
+
+  ENDDO.
+
+  " Libera o objeto OLE
+  FREE OBJECT h_range.
+
+ENDFORM.                               " INSERT_ROW
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  DRAW_TOP_BORDER
+*&---------------------------------------------------------------------*
+
+FORM draw_top_border USING p_row TYPE i.
+
+  DATA: l_range   TYPE string,
+        p_str_row TYPE string.
+
+
+  p_str_row = p_row.
+
+  " Define o intervalo da linha (de B a AD)
+  CONCATENATE 'B' p_str_row ':AD' p_str_row INTO l_range.
+
+  " Remove espaços de l_range
+  CONDENSE l_range.
+
+  " Seleciona o intervalo da linha
+  CALL METHOD OF h_appl 'RANGE' = h_range
+    EXPORTING
+      #1 = l_range.
+
+  " Ativa o intervalo
+  CALL METHOD OF h_range 'SELECT'.
+
+  CALL METHOD OF h_range 'Borders' = h_border
+    EXPORTING
+      #1 = 8. " 8 representa xlEdgeTop (borda superior)
+
+  SET PROPERTY OF h_border 'LineStyle' = '1'. "xlContinuous
+
+  " Libera os objetos OLE
+  FREE OBJECT h_border.
+  FREE OBJECT h_range.
+
+ENDFORM.                               " DRAW_TOP_BORDER
+
+
+*&---------------------------------------------------------------------*
+*&      Form  INSERT_ROW
+*&---------------------------------------------------------------------*
+FORM insert_row USING   p_row           TYPE i
+                        p_lines_to_skip TYPE i.
+
+  DATA: h_range    TYPE ole2_object,
+        l_range    TYPE string,
+        lv_str_row TYPE string.
+  lv_str_row = p_row.
+
+
+  CONCATENATE 'A' lv_str_row ':AG' lv_str_row INTO l_range.
+
+  CALL METHOD OF
+      h_appl
+      'RANGE' = h_range
+    EXPORTING
+      #1 = l_range.
+
+
+  DO   p_lines_to_skip TIMES.
+    " Insere a nova linha
+    CALL METHOD OF h_range 'INSERT'.
+
+  ENDDO.
+
+  " Libera o objeto OLE
+  FREE OBJECT h_range.
+
+ENDFORM.                               " INSERT_ROW
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  FIND_FILLED_LINE
+*&---------------------------------------------------------------------*
+
+FORM find_filled_line CHANGING p_line TYPE i.
+
+  DATA: l_value        TYPE string,
+        lv_cell_ref    TYPE string,
+        lv_aux         TYPE string,
+        lv_filled_line TYPE i.
+
+  FIELD-SYMBOLS: <cell_value> TYPE any.
+
+  lv_aux = p_line.
+
+  lv_filled_line = 0.
+  DO 20 TIMES.
+    CLEAR l_value.
+
+    CONCATENATE 'B' lv_aux INTO lv_cell_ref.
+
+    CALL METHOD OF h_appl 'RANGE' = h_range
+      EXPORTING
+        #1 = lv_cell_ref.
+
+    GET PROPERTY OF h_range 'VALUE' = l_value.
+
+    IF l_value IS NOT INITIAL.
+      p_line = lv_aux.
+      EXIT.
+    ELSE.
+      lv_aux = lv_aux + 1.
+    ENDIF.
+
+    FREE OBJECT h_range.
+  ENDDO.
+
+ENDFORM.                              " FIND_FILLED_LINE
